@@ -1,0 +1,27 @@
+{
+  "name": "termux-mcp-server",
+  "version": "1.0.0",
+  "description": "A Model Context Protocol (MCP) server for Termux on Android",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start-sse": "node index.js --sse"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "termux",
+    "android"
+  ],
+  "author": "jinyinghua",
+  "license": "MIT",
+  "type": "commonjs",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.1",
+    "bonjour-service": "^1.1.1",
+    "cors": "^2.8.6",
+    "express": "^4.18.2",
+    "zod": "^3.22.4"
+  }
+}
