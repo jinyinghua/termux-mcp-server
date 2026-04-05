@@ -97,21 +97,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   try {
     switch (name) {
-      case "read_file": {
+      case "read_termux_file": {
         const filePath = resolvePath(args.path);
         if (!fs.existsSync(filePath)) throw new Error(`文件不存在: ${filePath}`);
         const content = fs.readFileSync(filePath, "utf-8");
         return { content: [{ type: "text", text: content }] };
       }
 
-      case "write_to_file": {
+      case "edit_file": {
         const filePath = resolvePath(args.path);
         fs.mkdirSync(path.dirname(filePath), { recursive: true });
         fs.writeFileSync(filePath, args.content, "utf-8");
         return { content: [{ type: "text", text: `成功写入到 ${filePath}` }] };
       }
 
-      case "execute_command": {
+      case "execute_shell_command": {
         // 在 Termux 环境中执行命令
         return new Promise((resolve) => {
           // 使用 Termux 环境中的 shell 执行命令
