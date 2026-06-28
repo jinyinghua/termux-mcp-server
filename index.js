@@ -18,23 +18,24 @@ const os = require("os");
 const PORT = process.env.PORT || 3000;
 const MODE = process.argv.includes("--stdio") ? "stdio" : "sse";
 
-// 创建 MCP Server 实例
-const server = new Server(
-  {
-    name: "mac-mcp-server",
-    version: "1.0.0",
-  },
-  {
-    capabilities: {
-      tools: {},
-    },
-  }
-);
-
 /**
- * 注册工具列表
+ * 创建并配置一个独立的 MCP Server 实例
+ * 每次调用返回一个新的 Server，避免单例 transport 冲突
  */
-server.setRequestHandler(ListToolsRequestSchema, async () => {
+function createServer() {
+  const server = new Server(
+    {
+      name: "mac-mcp-server",
+      version: "1.0.0",
+    },
+    {
+      capabilities: {
+        tools: {},
+      },
+    }
+  );
+
+  server.setRequestHandler(ListToolsRequestSchema, async () => {
   console.log("收到 ListTools 请求");
   return {
     tools: [
@@ -76,74 +77,77 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   };
 });
 
-/**
- * 路径处理工具：支持 ~ 符号
- */
-function resolvePath(filePath) {
-  if (filePath.startsWith("~")) {
-    // 在 Termux 环境中，直接使用环境变量 HOME
-    const homeDir = process.env.HOME || os.homedir();
-    return path.join(homeDir, filePath.slice(1));
-  }
-  return path.resolve(filePath);
-}
-
-/**
- * 处理工具调用
- */
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
-  console.log(`执行工具: ${name}`, args);
-
-  try {
-    switch (name) {
-      case "read_termux_file": {
-        const filePath = resolvePath(args.path);
-        if (!fs.existsSync(filePath)) throw new Error(`文件不存在: ${filePath}`);
-        const content = fs.readFileSync(filePath, "utf-8");
-        return { content: [{ type: "text", text: content }] };
-      }
-
-      case "edit_file": {
-        const filePath = resolvePath(args.path);
-        fs.mkdirSync(path.dirname(filePath), { recursive: true });
-        fs.writeFileSync(filePath, args.content, "utf-8");
-        return { content: [{ type: "text", text: `成功写入到 ${filePath}` }] };
-      }
-
-      case "execute_shell_command": {
-        // 在 Termux 环境中执行命令
-        return new Promise((resolve) => {
-          // 使用 Termux 环境中的 shell 执行命令
-          exec(args.command, {
-            env: process.env,
-            cwd: process.cwd()
-          }, (error, stdout, stderr) => {
-            if (error) {
-              resolve({
-                isError: true,
-                content: [{ type: "text", text: `错误: ${stderr || error.message}` }],
-              });
-            } else {
-              resolve({
-                content: [{ type: "text", text: stdout || "执行成功，无输出。" }],
-              });
-            }
-          });
-        });
-      }
-
-      default:
-        throw new Error(`未知的工具: ${name}`);
+  /**
+   * 路径处理工具：支持 ~ 符号
+   */
+  function resolvePath(filePath) {
+    if (filePath.startsWith("~")) {
+      // 在 Termux 环境中，直接使用环境变量 HOME
+      const homeDir = process.env.HOME || os.homedir();
+      return path.join(homeDir, filePath.slice(1));
     }
-  } catch (error) {
-    console.error(`工具执行失败: ${error.message}`);
-    return {
-      isError: true,
-      content: [{ type: "text", text: `调用失败: ${error.message}` }],
-    };
+    return path.resolve(filePath);
   }
-});
+
+  /**
+   * 处理工具调用
+   */
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const { name, arguments: args } = request.params;
+    console.log(`执行工具: ${name}`, args);
+
+    try {
+      switch (name) {
+        case "read_termux_file": {
+          const filePath = resolvePath(args.path);
+          if (!fs.existsSync(filePath)) throw new Error(`文件不存在: ${filePath}`);
+          const content = fs.readFileSync(filePath, "utf-8");
+          return { content: [{ type: "text", text: content }] };
+        }
+
+        case "edit_file": {
+          const filePath = resolvePath(args.path);
+          fs.mkdirSync(path.dirname(filePath), { recursive: true });
+          fs.writeFileSync(filePath, args.content, "utf-8");
+          return { content: [{ type: "text", text: `成功写入到 ${filePath}` }] };
+        }
+
+        case "execute_shell_command": {
+          // 在 Termux 环境中执行命令
+          return new Promise((resolve) => {
+            // 使用 Termux 环境中的 shell 执行命令
+            exec(args.command, {
+              env: process.env,
+              cwd: process.cwd()
+            }, (error, stdout, stderr) => {
+              if (error) {
+                resolve({
+                  isError: true,
+                  content: [{ type: "text", text: `错误: ${stderr || error.message}` }],
+                });
+              } else {
+                resolve({
+                  content: [{ type: "text", text: stdout || "执行成功，无输出。" }],
+                });
+              }
+            });
+          });
+        }
+
+        default:
+          throw new Error(`未知的工具: ${name}`);
+      }
+    } catch (error) {
+      console.error(`工具执行失败: ${error.message}`);
+      return {
+        isError: true,
+        content: [{ type: "text", text: `调用失败: ${error.message}` }],
+      };
+    }
+  });
+
+  return server;
+}
 
 /**
  * 启动逻辑
@@ -152,27 +156,32 @@ let mdnsProcess = null;
 
 if (MODE === "stdio") {
   const transport = new StdioServerTransport();
-  server.connect(transport).then(() => {
+  createServer().connect(transport).then(() => {
     console.error("MCP Server 正在以 Stdio 模式运行");
   });
 } else {
   const app = express();
   app.use(cors());
 
-  let transport;
+  // 每个 SSE 连接用独立的 server + transport 实例，按 sessionId 关联
+  const sessions = new Map();
 
   // SSE 连接端点
   app.get("/sse", async (req, res) => {
     console.log(`[${new Date().toISOString()}] SSE 连接请求: ${req.ip}`);
 
-    transport = new SSEServerTransport("/messages", res);
+    const mcpServer = createServer();
+    const transport = new SSEServerTransport("/messages", res);
 
     try {
-      await server.connect(transport);
-      console.log(`[${new Date().toISOString()}] SSE 已连接`);
+      await mcpServer.connect(transport);
+      const sessionId = transport.sessionId;
+      sessions.set(sessionId, { server: mcpServer, transport });
+      console.log(`[${new Date().toISOString()}] SSE 已连接 sessionId=${sessionId}`);
 
       req.on('close', () => {
-        console.log(`[${new Date().toISOString()}] SSE 已关闭: ${req.ip}`);
+        console.log(`[${new Date().toISOString()}] SSE 已关闭: ${req.ip} sessionId=${sessionId}`);
+        sessions.delete(sessionId);
       });
     } catch (error) {
       console.error("SSE 连接失败:", error);
@@ -183,9 +192,11 @@ if (MODE === "stdio") {
   // 消息接收端点
   app.post("/messages", async (req, res) => {
     console.log(`[${new Date().toISOString()}] 收到消息`);
-    if (transport) {
+    const sessionId = req.query.sessionId;
+    const session = sessionId ? sessions.get(sessionId) : undefined;
+    if (session) {
       try {
-        await transport.handlePostMessage(req, res);
+        await session.transport.handlePostMessage(req, res);
       } catch (error) {
         console.error("处理消息失败:", error);
         res.status(500).send(error.message);
